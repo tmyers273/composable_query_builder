@@ -3,10 +3,30 @@
 //! composable_query_builder is a library that provides composable query builders for SQLx and
 //! makes building dynamic queries easier.
 //!
-//! SQLx's built-in query builder is not composable and does not allow for easy
-//! dynamic query building.
+//! # Motivation
 //!
-//! This is currently only tested on Postgres.
+//! This library is meant to sit somewhere between a typical ORM and raw SQL, similar in
+//! nature to Golang's [squirrel](https://github.com/Masterminds/squirrel) package. Think
+//! of it as a giant Builder pattern for SQL.
+//!
+//!
+//! SQLx's built-in query builder has a few limitations that make for a painful developer
+//! experience.
+//!   1. it is not composable
+//!   2. does not allow for easy dynamic query building
+//!   3. the order of the query builder methods is important
+//!
+//! composer_query_builders aims to solve all these problems.
+//!
+//! This is currently only tested with Postgres.
+//!
+//! ### Query is not type checked
+//!
+//! It is your responsibility to ensure that you produce a syntactically correct query here,
+//! this API has no way to check it for you.
+//!
+//! ### Status: This is a work in progress.
+//! We currently use it in production, but the API is still subject to breaking changes.
 //!
 //! # Examples
 //! ```rust
@@ -25,10 +45,11 @@
 //! ```rust
 //! let status_id = Some(2);
 //! use composable_query_builder::ComposableQueryBuilder;
+//!
 //! let query = ComposableQueryBuilder::new()
 //!     .table("users")
 //!     .where_clause("id = ?", 1);
-//!
+//! // We'll had a where clause to the status_id field if it's Some
 //! let query = match status_id {
 //!     Some(status_id) => query.where_clause("status_id = ?", status_id),
 //!     None => query,
@@ -78,6 +99,7 @@ impl ComposableQueryBuilder {
         }
     }
 
+    /// Sets the table name for the query.
     pub fn table(mut self, table: impl Into<String>) -> Self {
         self.table = TableType::Simple(table.into());
         self
@@ -92,36 +114,63 @@ impl ComposableQueryBuilder {
         self
     }
 
+    /// Adds a single column to the select clause.
     pub fn select(mut self, select: impl Into<String>) -> Self {
         self.select.push(select.into());
         self
     }
 
+    /// Adds multiple columns to the select clause.
     pub fn select_many(mut self, select: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.select.extend(select.into_iter().map(|s| s.into()));
         self
     }
 
+    /// Adds a single group by clause
     pub fn group_by(mut self, group_by: impl Into<String>) -> Self {
         self.group_by.push(group_by.into());
         self
     }
 
+    /// Adds multiple group by clause
     pub fn group_by_many(mut self, group_by: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.group_by.extend(group_by.into_iter().map(|s| s.into()));
         self
     }
 
+    /// Adds a single join clause
+    /// ```rust
+    /// use composable_query_builder::ComposableQueryBuilder;
+    /// let query = ComposableQueryBuilder::new()
+    ///    .table("users")
+    ///    .join("left join subscriptions on subscriptions.user_id = users.id")
+    ///    .into_builder();
+    /// let sql = query.sql();
+    ///
+    /// assert_eq!("select * from users left join subscriptions on subscriptions.user_id = users.id", sql);
     pub fn join(mut self, join: impl Into<String>) -> Self {
         self.joins.push(join.into());
         self
     }
 
+    /// Adds a single where clause. Values are expected to be denoted via a `?` placeholder.
+    ///
+    /// ```rust
+    /// use composable_query_builder::ComposableQueryBuilder;
+    /// let query = ComposableQueryBuilder::new()
+    ///   .table("users")
+    ///   .where_clause("id = ?", 1);
+    /// let sql = query.sql();
+    ///
+    /// assert_eq!("select * from users where id = $1", sql);
+    /// ```
     pub fn where_clause(mut self, where_clause: impl Into<String>, v: impl Into<SQLValue>) -> Self {
         self.where_clause.push(where_clause.into(), v);
         self
     }
 
+    /// Conditionally add a [where_clause](ComposableQueryBuilder::where_clause). The given
+    /// callback is lazily evaluated, so it's only called if the condition is true.
     pub fn where_if(mut self, condition: bool, cb: impl Fn() -> (String, SQLValue)) -> Self {
         if !condition {
             return self;
@@ -257,7 +306,7 @@ impl ComposableQueryBuilder {
 }
 
 #[derive(Clone)]
-pub struct WhereClauses {
+struct WhereClauses {
     clauses: Vec<(String, SQLValue)>,
 }
 
@@ -289,39 +338,25 @@ impl WhereClauses {
 
         (out, self.clauses.into_iter().map(|(_, v)| v).collect())
     }
-
-    // Not sure what this was for?
-    // pub fn inject(self, qb: &mut QueryBuilder<Postgres>) {
-    //     if !self.clauses.is_empty() {
-    //         // Build up where clauses
-    //         let mut out = "\nwhere\n".to_string();
-    //         for (i, (s, _)) in self.clauses.iter().enumerate() {
-    //             out.push_str("    ");
-    //             out.push_str(s.as_str());
-    //             if i != self.clauses.len() - 1 {
-    //                 out.push_str(" and\n");
-    //             }
-    //         }
-    //
-    //         let parts = out.split('?');
-    //         for pair in parts.zip_longest(self.clauses.into_iter().map(|(_, v)| v)) {
-    //             match pair {
-    //                 EitherOrBoth::Both(part, v) => {
-    //                     qb.push(part);
-    //                     v.push_bind(qb);
-    //                 }
-    //                 EitherOrBoth::Left(part) => {
-    //                     qb.push(part);
-    //                 }
-    //                 EitherOrBoth::Right(v) => {
-    //                     v.push_bind(qb);
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
+/// SQLValue is an enum wrapper around the various types that can be bound to a query.
+///
+/// This allows us to do some fairly magic looking things with the query builder, in
+/// particular with the where clause. For example, the same [where_clause](ComposableQueryBuilder::where_clause)
+/// can be used for both a string and int column.
+///
+/// ```rust
+/// use composable_query_builder::ComposableQueryBuilder;
+/// let query = ComposableQueryBuilder::new()
+///     .table("users")
+///     .where_clause("status_id = ?", 2) // an int
+///     .where_clause("email = ?", "test@example") // a string
+///     .into_builder();
+///
+/// let sql = query.sql();
+/// assert_eq!("select * from users where status_id = $1 and email = $2", sql);
+/// ```
 #[derive(Debug, Clone)]
 pub enum SQLValue {
     I16(i16),
@@ -428,156 +463,5 @@ mod composable_query_builder_tests {
         let query = q.sql();
 
         assert_eq!("select * from users order by email asc ", query);
-    }
-
-    #[test]
-    fn basic_where() {
-        let q = ComposableQueryBuilder::new()
-            .where_clause("id = ?", 123)
-            .where_clause("status_id = ?", 3)
-            .into_builder();
-        let query = q.sql();
-
-        println!("{}", query);
-    }
-
-    #[test]
-    fn qb_test() {
-        let profile_id = 123;
-        let lookback_days = Some(30i32);
-        let ad_group_ids = vec![1, 2, 3];
-
-        let perf_fields: Vec<String> = vec![];
-
-        let targets = ComposableQueryBuilder::new()
-            .table("target_performances")
-            .select_many(perf_fields.clone())
-            .select("target_performances.search_term")
-            .select("target_performances.ad_group_id")
-            .select("target_performances.target_id")
-            .select("target_performances.campaign_id")
-            .select("target_performances.profile_id")
-            .select("targets.bid")
-            .join("left join targets on target_performances.target_id = targets.target_id")
-            .join(format!(
-                "right join (values ({})) vals(v1) on (target_performances.ad_group_id = v1)",
-                ad_group_ids.iter().map(|x| x.to_string()).join("), (")
-            ))
-            .group_by_many(vec![
-                "target_performances.search_term",
-                "target_performances.target_id",
-                "target_performances.ad_group_id",
-                "target_performances.campaign_id",
-                "target_performances.profile_id",
-                "targets.bid",
-            ])
-            .where_clause("target_performances.profile_id = ?", profile_id)
-            .where_if(lookback_days.is_some(), || {
-                (
-                    "date >= ?".into(),
-                    Utc::now()
-                        .naive_utc()
-                        .checked_sub_days(Days::new(lookback_days.unwrap() as u64))
-                        .unwrap()
-                        .into(),
-                )
-            });
-
-        let keywords = ComposableQueryBuilder::new()
-            .table("keyword_performances")
-            .select_many(perf_fields)
-            .select("keyword_performances.search_term")
-            .select("keyword_performances.ad_group_id")
-            .select("keyword_performances.keyword_id")
-            .select("keyword_performances.campaign_id")
-            .select("keyword_performances.profile_id")
-            .select("keywords.bid")
-            .join("left join keywords on keyword_performances.keyword_id = keywords.keyword_id")
-            .join(format!(
-                "right join (values ({})) vals(v1) on (keyword_performances.ad_group_id = v1)",
-                ad_group_ids.iter().map(|x| x.to_string()).join("), (")
-            ))
-            .group_by_many(vec![
-                "keyword_performances.search_term",
-                "keyword_performances.keyword_id",
-                "keyword_performances.ad_group_id",
-                "keyword_performances.campaign_id",
-                "keyword_performances.profile_id",
-                "keywords.bid",
-            ])
-            .where_clause("keyword_performances.profile_id = ?", profile_id)
-            .where_if(lookback_days.is_some(), || {
-                (
-                    "date >= ?".into(),
-                    Utc::now()
-                        .naive_utc()
-                        .checked_sub_days(Days::new(lookback_days.unwrap() as u64))
-                        .unwrap()
-                        .into(),
-                )
-            });
-
-        let f = ComposableQueryBuilder::new()
-            .complex_table("((?)\nunion\n(?)) t", vec![targets, keywords])
-            .select_many(vec![
-                "array_agg(coalesce(bid,0)) as bid_array",
-                "array_agg(sales) as sales_Array",
-                "array_agg(ad_group_id) as ad_group_id_array",
-                "sum(cost) as cost",
-                "sum(impressions) as impressions",
-                "sum(clicks) as clicks",
-                "sum(sales) as sales",
-                "sum(orders) as orders",
-                "case sum(sales) when 0 then 0 else sum(cost) / sum(sales) * 100.0 end as acos",
-                "case sum(cost) when 0 then 0 else sum(sales) / sum(cost) end as roas",
-                "case sum(clicks) when 0 then 0 else sum(cost) / sum(clicks) end as cpc",
-                "case sum(impressions) when 0 then 0 else sum(clicks) / sum(impressions) * 100.0 end as ctr",
-                "case sum(clicks) when 0 then 0 else sum(orders) / sum(clicks) * 100.0 end as cvr",
-                "case sum(orders) when 0 then 0 else sum(cost) / sum(orders) * 100.0 end as cac",
-                "search_term",
-
-                // Some magic here to resolve the bid. If there are no sales for that search term:
-                // - we are doing a simple average
-                // otherwise:
-                // - we are doing a weighted average based on the sales
-                //
-                // example 1:
-                // - we have no sales for a search term
-                // - 2 keywords that shows up for that search term with a bid of $0.10 and $0.15,
-                // - 1 target that shows up for that search term with a bid of $0.25
-                // - the resolved bid will be ($0.10 + $0.15 + $0.25 = $0.50) / 3 = $0.1666 = $0.17
-                //
-                // example 2:
-                // - we have $500 in sales for a search term
-                // - 1 keyword that shows up for that search term with a bid of $0.10 and $100 in sales,
-                // - 1 target that shows up for that search term with a bid of $0.20 and $200 in sales,
-                // - 1 target that shows up for that search term with a bid of $0.50 and $200 in sales,
-                // - the resolved bid will be ($0.10*$100 + $0.20*$200 + $0.50*$200 = $150) / $500 = $0.30
-                "case sum(sales) when 0 then round(sum(bid)/count(bid))::integer else round(sum(bid*sales)/sum(sales))::integer end as bid",
-            ]).group_by("search_term");
-
-        let final_query = ComposableQueryBuilder::new().complex_table("(?) as u", vec![f]);
-        // .where_if(|| None);
-
-        let (p, v) = final_query.parts();
-
-        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("");
-        let parts = p.split('?');
-        for pair in parts.zip_longest(v) {
-            match pair {
-                EitherOrBoth::Both(part, v) => {
-                    qb.push(part);
-                    v.push_bind(&mut qb);
-                }
-                EitherOrBoth::Left(part) => {
-                    qb.push(part);
-                }
-                EitherOrBoth::Right(v) => {
-                    v.push_bind(&mut qb);
-                }
-            }
-        }
-
-        println!("{}", qb.sql());
     }
 }
