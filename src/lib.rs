@@ -187,8 +187,24 @@ impl ComposableQueryBuilder {
         self
     }
 
+    pub fn limit_opt(mut self, limit: Option<u64>) -> Self {
+        match limit {
+            Some(limit) => self.limit = Some(limit),
+            None => self.limit = None,
+        }
+        self
+    }
+
     pub fn offset(mut self, offset: u64) -> Self {
         self.offset = Some(offset);
+        self
+    }
+
+    pub fn offset_opt(mut self, offset: Option<u64>) -> Self {
+        match offset {
+            Some(offset) => self.offset = Some(offset),
+            None => self.offset = None,
+        }
         self
     }
 
@@ -436,6 +452,25 @@ mod composable_query_builder_tests {
     }
 
     #[test]
+    fn limit_opt_works() {
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .limit_opt(Some(10))
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!("select * from users limit $1", query);
+
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .limit_opt(None)
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!("select * from users", query);
+    }
+
+    #[test]
     fn offset_works() {
         let q = ComposableQueryBuilder::new()
             .table("users")
@@ -444,6 +479,25 @@ mod composable_query_builder_tests {
         let query = q.sql();
 
         assert_eq!("select * from users offset $1", query);
+    }
+
+    #[test]
+    fn offset_opt_works() {
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .offset_opt(Some(10))
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!("select * from users offset $1", query);
+
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .offset_opt(None)
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!("select * from users", query);
     }
 
     #[test]
