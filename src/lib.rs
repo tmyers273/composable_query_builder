@@ -38,9 +38,13 @@
 //! let sql = query.sql();
 //! assert_eq!("select * from users where id = $1 and status_id = $2", sql);
 //! ```
+mod order;
+
 use chrono::NaiveDateTime;
 use itertools::{EitherOrBoth, Itertools};
 use sqlx::{Postgres, QueryBuilder};
+
+pub use order::OrderDir;
 
 #[derive(Clone)]
 pub enum TableType {
@@ -57,6 +61,7 @@ pub struct ComposableQueryBuilder {
     where_clause: WhereClauses,
     limit: Option<u64>,
     offset: Option<u64>,
+    order_by: Option<(String, OrderDir)>,
 }
 
 impl ComposableQueryBuilder {
@@ -69,6 +74,7 @@ impl ComposableQueryBuilder {
             where_clause: WhereClauses::new(),
             limit: None,
             offset: None,
+            order_by: None,
         }
     }
 
@@ -137,6 +143,11 @@ impl ComposableQueryBuilder {
         self
     }
 
+    pub fn order_by(mut self, col: impl ToString, dir: OrderDir) -> Self {
+        self.order_by = Some((col.to_string(), dir));
+        self
+    }
+
     pub fn parts(self) -> (String, Vec<SQLValue>) {
         let mut vals = vec![];
 
@@ -189,6 +200,17 @@ impl ComposableQueryBuilder {
             str.push_str(" group by ");
             // str.push_str("\ngroup by\n    ");
             str.push_str(&self.group_by.join(", "));
+        }
+
+        match self.order_by {
+            Some((col, dir)) => {
+                str.push_str(" order by ");
+                str.push_str(&col);
+                str.push(' ');
+                str.push_str(dir.as_str());
+                str.push(' ');
+            }
+            None => {}
         }
 
         match self.limit {
@@ -365,7 +387,7 @@ mod composable_query_builder_tests {
     use itertools::{EitherOrBoth, Itertools};
     use sqlx::{Postgres, QueryBuilder};
 
-    use crate::ComposableQueryBuilder;
+    use crate::{ComposableQueryBuilder, OrderDir};
 
     #[test]
     fn limit_works() {
@@ -387,6 +409,25 @@ mod composable_query_builder_tests {
         let query = q.sql();
 
         assert_eq!("select * from users offset $1", query);
+    }
+
+    #[test]
+    fn order_by_works() {
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .order_by("email", OrderDir::Desc)
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!("select * from users order by email desc ", query);
+
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .order_by("email", OrderDir::Asc)
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!("select * from users order by email asc ", query);
     }
 
     #[test]
