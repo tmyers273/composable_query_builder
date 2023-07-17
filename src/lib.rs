@@ -406,6 +406,7 @@ pub enum SQLValue {
     F64(f64),
     DateTime(NaiveDateTime),
     VecI64(Vec<i64>),
+    String(String),
 }
 
 impl SQLValue {
@@ -418,7 +419,24 @@ impl SQLValue {
             SQLValue::F64(v) => qb.push_bind(*v),
             SQLValue::DateTime(v) => qb.push_bind(*v),
             SQLValue::VecI64(v) => qb.push_bind(v.clone()),
+            SQLValue::String(v) => qb.push_bind(v.clone()),
         };
+    }
+
+    /// This method isn't actually used, but is here to enable a compile time check
+    /// that we have a From<T> implementation for every type that we want to use.
+    #[allow(dead_code)]
+    fn dummy(&self) -> SQLValue {
+        match self.clone() {
+            SQLValue::I16(v) => v.into(),
+            SQLValue::I32(v) => v.into(),
+            SQLValue::I64(v) => v.into(),
+            SQLValue::U64(v) => v.into(),
+            SQLValue::F64(v) => v.into(),
+            SQLValue::DateTime(v) => v.into(),
+            SQLValue::VecI64(v) => v.into(),
+            SQLValue::String(v) => v.into(),
+        }
     }
 }
 
@@ -461,6 +479,12 @@ impl From<u64> for SQLValue {
 impl From<f64> for SQLValue {
     fn from(v: f64) -> Self {
         SQLValue::F64(v)
+    }
+}
+
+impl From<String> for SQLValue {
+    fn from(v: String) -> Self {
+        SQLValue::String(v)
     }
 }
 
