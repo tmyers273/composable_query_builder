@@ -379,6 +379,7 @@ pub enum SQLValue {
     I32(i32),
     I64(i64),
     U64(u64),
+    F64(f64),
     DateTime(NaiveDateTime),
     VecI64(Vec<i64>),
 }
@@ -390,6 +391,7 @@ impl SQLValue {
             SQLValue::I32(v) => qb.push_bind(*v),
             SQLValue::I64(v) => qb.push_bind(*v),
             SQLValue::U64(v) => qb.push_bind(*v as i64),
+            SQLValue::F64(v) => qb.push_bind(*v),
             SQLValue::DateTime(v) => qb.push_bind(*v),
             SQLValue::VecI64(v) => qb.push_bind(v.clone()),
         };
@@ -432,12 +434,14 @@ impl From<u64> for SQLValue {
     }
 }
 
+impl From<f64> for SQLValue {
+    fn from(v: f64) -> Self {
+        SQLValue::F64(v)
+    }
+}
+
 #[cfg(test)]
 mod composable_query_builder_tests {
-    use chrono::{Days, Utc};
-    use itertools::{EitherOrBoth, Itertools};
-    use sqlx::{Postgres, QueryBuilder};
-
     use crate::{ComposableQueryBuilder, OrderDir};
 
     #[test]
