@@ -165,7 +165,13 @@ impl ComposableQueryBuilder {
     /// assert_eq!("select * from users where id = $1", sql);
     /// ```
     pub fn where_clause(mut self, where_clause: impl Into<String>, v: impl Into<SQLValue>) -> Self {
-        self.where_clause.push(where_clause.into(), v);
+        self.where_clause
+            .push(where_clause.into(), v, BoolKind::And);
+        self
+    }
+
+    pub fn or_where(mut self, where_clause: impl Into<String>, v: impl Into<SQLValue>) -> Self {
+        self.where_clause.push(where_clause.into(), v, BoolKind::Or);
         self
     }
 
@@ -177,7 +183,7 @@ impl ComposableQueryBuilder {
         }
 
         let (s, v) = cb();
-        self.where_clause.push(s, v);
+        self.where_clause.push(s, v, BoolKind::And);
 
         self
     }
@@ -321,9 +327,25 @@ impl ComposableQueryBuilder {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+enum BoolKind {
+    And,
+    Or,
+}
+
+impl BoolKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BoolKind::And => "and",
+            BoolKind::Or => "or",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct WhereClauses {
-    clauses: Vec<(String, SQLValue)>,
+    clauses: Vec<(String, SQLValue, BoolKind)>,
 }
 
 impl WhereClauses {
@@ -331,8 +353,8 @@ impl WhereClauses {
         Self { clauses: vec![] }
     }
 
-    pub fn push(&mut self, clause: impl Into<String>, value: impl Into<SQLValue>) {
-        self.clauses.push((clause.into(), value.into()));
+    pub fn push(&mut self, clause: impl Into<String>, value: impl Into<SQLValue>, kind: BoolKind) {
+        self.clauses.push((clause.into(), value.into(), kind));
     }
 
     pub fn parts(self) -> (String, Vec<SQLValue>) {
@@ -343,16 +365,18 @@ impl WhereClauses {
         // Build up where clauses
         let mut out = " where ".to_string();
         // let mut out = "\nwhere\n".to_string();
-        for (i, (s, _)) in self.clauses.iter().enumerate() {
+        for (i, (s, _, kind)) in self.clauses.iter().enumerate() {
             // out.push_str("    ");
             out.push_str(s.as_str());
             if i != self.clauses.len() - 1 {
-                out.push_str(" and ");
+                out.push_str(" ");
+                out.push_str(kind.as_str());
+                out.push_str(" ");
                 // out.push_str(" and\n");
             }
         }
 
-        (out, self.clauses.into_iter().map(|(_, v)| v).collect())
+        (out, self.clauses.into_iter().map(|(_, v, _)| v).collect())
     }
 }
 
@@ -443,6 +467,22 @@ impl From<f64> for SQLValue {
 #[cfg(test)]
 mod composable_query_builder_tests {
     use crate::{ComposableQueryBuilder, OrderDir};
+
+    #[test]
+    fn or_where_works() {
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .or_where("status_id = ?", 1)
+            .or_where("status_id = ?", 2)
+            .or_where("status_id = ?", 3)
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!(
+            "select * from users where status_id = $1 or status_id = $2 or status_id = $3",
+            query
+        );
+    }
 
     #[test]
     fn limit_works() {
