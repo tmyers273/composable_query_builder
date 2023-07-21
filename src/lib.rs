@@ -407,6 +407,7 @@ pub enum SQLValue {
     DateTime(NaiveDateTime),
     VecI64(Vec<i64>),
     String(String),
+    Bool(bool),
 }
 
 impl SQLValue {
@@ -420,6 +421,7 @@ impl SQLValue {
             SQLValue::DateTime(v) => qb.push_bind(*v),
             SQLValue::VecI64(v) => qb.push_bind(v.clone()),
             SQLValue::String(v) => qb.push_bind(v.clone()),
+            SQLValue::Bool(v) => qb.push_bind(*v),
         };
     }
 
@@ -436,6 +438,7 @@ impl SQLValue {
             SQLValue::DateTime(v) => v.into(),
             SQLValue::VecI64(v) => v.into(),
             SQLValue::String(v) => v.into(),
+            SQLValue::Bool(v) => v.into(),
         }
     }
 }
@@ -485,6 +488,12 @@ impl From<f64> for SQLValue {
 impl From<String> for SQLValue {
     fn from(v: String) -> Self {
         SQLValue::String(v)
+    }
+}
+
+impl From<bool> for SQLValue {
+    fn from(v: bool) -> Self {
+        SQLValue::Bool(v)
     }
 }
 
