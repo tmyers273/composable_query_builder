@@ -60,11 +60,14 @@
 //! assert_eq!("select * from users where id = $1 and status_id = $2", sql);
 //! ```
 mod order;
+mod sql_value;
+mod where_clause;
 
-use chrono::NaiveDateTime;
 use itertools::{EitherOrBoth, Itertools};
 use sqlx::{Postgres, QueryBuilder};
 
+use crate::sql_value::SQLValue;
+use crate::where_clause::WhereClauses;
 pub use order::OrderDir;
 
 #[derive(Clone)]
@@ -175,6 +178,11 @@ impl ComposableQueryBuilder {
         self
     }
 
+    pub fn multi_where(mut self, where_clause: impl Into<String>, v: Vec<SQLValue>) -> Self {
+        self.where_clause.push_multi(where_clause.into(), v);
+        self
+    }
+
     /// Conditionally add a [where_clause](ComposableQueryBuilder::where_clause). The given
     /// callback is lazily evaluated, so it's only called if the condition is true.
     pub fn where_if(mut self, condition: bool, cb: impl Fn() -> (String, SQLValue)) -> Self {
@@ -259,11 +267,14 @@ impl ComposableQueryBuilder {
             }
         }
 
+        // Joins
         for j in self.joins {
             str.push(' ');
             // str.push('\n');
             str.push_str(&j);
         }
+
+        // Where clauses
         let (where_str, str_values) = self.where_clause.parts();
         str.push_str(&where_str);
         vals.extend(str_values);
@@ -329,7 +340,7 @@ impl ComposableQueryBuilder {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
-enum BoolKind {
+pub enum BoolKind {
     And,
     Or,
 }
@@ -340,160 +351,6 @@ impl BoolKind {
             BoolKind::And => "and",
             BoolKind::Or => "or",
         }
-    }
-}
-
-#[derive(Clone)]
-struct WhereClauses {
-    clauses: Vec<(String, SQLValue, BoolKind)>,
-}
-
-impl WhereClauses {
-    pub fn new() -> Self {
-        Self { clauses: vec![] }
-    }
-
-    pub fn push(&mut self, clause: impl Into<String>, value: impl Into<SQLValue>, kind: BoolKind) {
-        self.clauses.push((clause.into(), value.into(), kind));
-    }
-
-    pub fn parts(self) -> (String, Vec<SQLValue>) {
-        if self.clauses.is_empty() {
-            return ("".to_string(), vec![]);
-        }
-
-        // Build up where clauses
-        let mut out = " where ".to_string();
-        // let mut out = "\nwhere\n".to_string();
-        for (i, (s, _, kind)) in self.clauses.iter().enumerate() {
-            // out.push_str("    ");
-            out.push_str(s.as_str());
-            if i != self.clauses.len() - 1 {
-                out.push_str(" ");
-                out.push_str(kind.as_str());
-                out.push_str(" ");
-                // out.push_str(" and\n");
-            }
-        }
-
-        (out, self.clauses.into_iter().map(|(_, v, _)| v).collect())
-    }
-}
-
-/// SQLValue is an enum wrapper around the various types that can be bound to a query.
-///
-/// This allows us to do some fairly magic looking things with the query builder, in
-/// particular with the where clause. For example, the same [where_clause](ComposableQueryBuilder::where_clause)
-/// can be used for both a string and int column.
-///
-/// ```rust
-/// use composable_query_builder::ComposableQueryBuilder;
-/// let query = ComposableQueryBuilder::new()
-///     .table("users")
-///     .where_clause("status_id = ?", 2) // an int
-///     .where_clause("email = ?", "test@example") // a string
-///     .into_builder();
-///
-/// let sql = query.sql();
-/// assert_eq!("select * from users where status_id = $1 and email = $2", sql);
-/// ```
-#[derive(Debug, Clone)]
-pub enum SQLValue {
-    I16(i16),
-    I32(i32),
-    I64(i64),
-    U64(u64),
-    F64(f64),
-    DateTime(NaiveDateTime),
-    VecI64(Vec<i64>),
-    String(String),
-    Bool(bool),
-}
-
-impl SQLValue {
-    pub fn push_bind(&self, qb: &mut QueryBuilder<Postgres>) {
-        match self {
-            SQLValue::I16(v) => qb.push_bind(*v),
-            SQLValue::I32(v) => qb.push_bind(*v),
-            SQLValue::I64(v) => qb.push_bind(*v),
-            SQLValue::U64(v) => qb.push_bind(*v as i64),
-            SQLValue::F64(v) => qb.push_bind(*v),
-            SQLValue::DateTime(v) => qb.push_bind(*v),
-            SQLValue::VecI64(v) => qb.push_bind(v.clone()),
-            SQLValue::String(v) => qb.push_bind(v.clone()),
-            SQLValue::Bool(v) => qb.push_bind(*v),
-        };
-    }
-
-    /// This method isn't actually used, but is here to enable a compile time check
-    /// that we have a From<T> implementation for every type that we want to use.
-    #[allow(dead_code)]
-    fn dummy(&self) -> SQLValue {
-        match self.clone() {
-            SQLValue::I16(v) => v.into(),
-            SQLValue::I32(v) => v.into(),
-            SQLValue::I64(v) => v.into(),
-            SQLValue::U64(v) => v.into(),
-            SQLValue::F64(v) => v.into(),
-            SQLValue::DateTime(v) => v.into(),
-            SQLValue::VecI64(v) => v.into(),
-            SQLValue::String(v) => v.into(),
-            SQLValue::Bool(v) => v.into(),
-        }
-    }
-}
-
-impl From<i16> for SQLValue {
-    fn from(v: i16) -> Self {
-        SQLValue::I16(v)
-    }
-}
-
-impl From<i32> for SQLValue {
-    fn from(v: i32) -> Self {
-        SQLValue::I32(v)
-    }
-}
-
-impl From<i64> for SQLValue {
-    fn from(v: i64) -> Self {
-        SQLValue::I64(v)
-    }
-}
-
-impl From<NaiveDateTime> for SQLValue {
-    fn from(v: NaiveDateTime) -> Self {
-        SQLValue::DateTime(v)
-    }
-}
-
-impl From<Vec<i64>> for SQLValue {
-    fn from(v: Vec<i64>) -> Self {
-        SQLValue::VecI64(v)
-    }
-}
-
-impl From<u64> for SQLValue {
-    fn from(v: u64) -> Self {
-        SQLValue::U64(v)
-    }
-}
-
-impl From<f64> for SQLValue {
-    fn from(v: f64) -> Self {
-        SQLValue::F64(v)
-    }
-}
-
-impl From<String> for SQLValue {
-    fn from(v: String) -> Self {
-        SQLValue::String(v)
-    }
-}
-
-impl From<bool> for SQLValue {
-    fn from(v: bool) -> Self {
-        SQLValue::Bool(v)
     }
 }
 
@@ -594,5 +451,22 @@ mod composable_query_builder_tests {
         let query = q.sql();
 
         assert_eq!("select * from users order by email asc ", query);
+    }
+
+    #[test]
+    fn multi_where_works() {
+        let q = ComposableQueryBuilder::new()
+            .table("users")
+            .multi_where(
+                "(orders > ? and orders < ?) or sales > ?",
+                vec![10.into(), 100.into(), 123.45.into()],
+            )
+            .into_builder();
+        let query = q.sql();
+
+        assert_eq!(
+            "select * from users where (orders > $1 and orders < $2) or sales > $3",
+            query
+        );
     }
 }
