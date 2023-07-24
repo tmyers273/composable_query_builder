@@ -40,9 +40,7 @@ impl WhereClauses {
             }
         }
 
-        println!("here");
         for (i, (s, _)) in self.multi_clauses.iter().enumerate() {
-            println!("in multi clause");
             out.push_str(s.as_str());
             if i != self.multi_clauses.len() - 1 {
                 out.push_str(" and ");
