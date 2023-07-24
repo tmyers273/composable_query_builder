@@ -284,30 +284,22 @@ impl ComposableQueryBuilder {
             str.push_str(&self.group_by.join(", "));
         }
 
-        match self.order_by {
-            Some((col, dir)) => {
-                str.push_str(" order by ");
-                str.push_str(&col);
-                str.push(' ');
-                str.push_str(dir.as_str());
-                str.push(' ');
-            }
-            None => {}
+        if let Some((col, dir)) = self.order_by {
+            str.push_str(" order by ");
+            str.push_str(&col);
+            str.push(' ');
+            str.push_str(dir.as_str());
+            str.push(' ');
         }
 
-        match self.limit {
-            Some(limit) => {
-                str.push_str(" limit ");
-                vals.push(SQLValue::U64(limit));
-            }
-            None => {}
+        if let Some(limit) = self.limit {
+            str.push_str(" limit ");
+            vals.push(SQLValue::U64(limit));
         }
-        match self.offset {
-            Some(offset) => {
-                str.push_str(" offset ");
-                vals.push(SQLValue::U64(offset));
-            }
-            None => {}
+
+        if let Some(offset) = self.offset {
+            str.push_str(" offset ");
+            vals.push(SQLValue::U64(offset));
         }
 
         (str, vals)

@@ -34,9 +34,9 @@ impl WhereClauses {
         for (i, (s, _, kind)) in self.clauses.iter().enumerate() {
             out.push_str(s.as_str());
             if i != self.clauses.len() - 1 {
-                out.push_str(" ");
+                out.push(' ');
                 out.push_str(kind.as_str());
-                out.push_str(" ");
+                out.push(' ');
             }
         }
 
